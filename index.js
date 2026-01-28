@@ -16,8 +16,7 @@ const port = process.env.PORT || 5000;
 const adminUser = process.env.ADMIN_USER || "admin"; 
 const adminPass = process.env.ADMIN_PASS || "password"; 
 
-// --- URL CLEANER (Smart Fix for 404) ---
-// Agar user ne galti se last mein '/' laga diya hai, toh ye use hata dega
+// URL Setup
 let rawApiUrl = process.env.TELEGRAM_API_URL || 'https://api.telegram.org';
 const telegramApiUrl = rawApiUrl.replace(/\/$/, ""); 
 
@@ -97,20 +96,27 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     }
 });
 
-// --- NEW & IMPROVED DOWNLOAD LOGIC ---
+// --- FINAL FIXED DOWNLOAD LOGIC ---
 app.get('/dl/:file_id/:filename', async (req, res) => {
     try {
         const fileId = req.params.file_id;
         const filename = decodeURIComponent(req.params.filename);
 
-        // Step 1: File ka asli path mangwao
+        // Step 1: File ka path mangwao
         const file = await bot.getFile(fileId);
         
-        // Step 2: URL khud banao (Library par bharosa mat karo)
-        // Ye Local Server aur Cloud dono ke liye kaam karega
-        const fileLink = `${telegramApiUrl}/file/bot${token}/${file.file_path}`;
+        // Step 2: Path ko Saaf Karo (Clean the Path)
+        // Local Server "/var/lib/..." deta hai, humein bas "documents/file.jpg" chahiye
+        let relativePath = file.file_path;
+        if (relativePath.includes(token)) {
+            // Token ke baad wala hissa utha lo
+            relativePath = relativePath.split(token + '/')[1];
+        }
 
-        console.log("Trying to download from:", fileLink); // Logs mein dikhega agar fail hua
+        // Sahi URL banao
+        const fileLink = `${telegramApiUrl}/file/bot${token}/${relativePath}`;
+
+        console.log("Corrected Download Link:", fileLink); // Ab ye logs mein sahi dikhega
 
         const response = await axios({
             url: fileLink,
@@ -123,14 +129,11 @@ app.get('/dl/:file_id/:filename', async (req, res) => {
         
         response.data.pipe(res);
     } catch (error) {
-        console.error("Download Error Details:", error.message);
-        if (error.response) {
-            console.error("Server Responded With:", error.response.status);
-            if(error.response.status === 404) {
-                 return res.status(404).send("File Not Found on Local Server. (Try re-uploading)");
-            }
+        console.error("Download Error:", error.message);
+        if (error.response && error.response.status === 404) {
+             return res.status(404).send("File path mismatch. Check logs for generated URL.");
         }
-        res.status(500).send("Download Failed. Check Logs.");
+        res.status(500).send("Download Failed.");
     }
 });
 
