@@ -1,6 +1,6 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, RedirectResponse
-import aiohttp, os
+import os, aiohttp
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
@@ -10,62 +10,51 @@ app = FastAPI()
 
 @app.get("/", response_class=HTMLResponse)
 async def home():
-    return """
+    return f"""
 <!DOCTYPE html>
 <html>
 <body style="background:#020617;color:#fff;font-family:sans-serif">
 <h2>Telegram Storage</h2>
+
 <input type="file" id="f">
 <button onclick="u()">Upload</button>
 <progress id="p" value="0" max="100"></progress>
 <p id="s"></p>
 
 <script>
-function u(){
+async function u() {{
  let f=document.getElementById("f").files[0];
- let x=new XMLHttpRequest();
- let d=new FormData();
- d.append("file",f);
+ let url="https://api.telegram.org/bot{BOT_TOKEN}/sendDocument";
+
+ let fd=new FormData();
+ fd.append("chat_id","{CHANNEL_ID}");
+ fd.append("document",f);
+
+ let xhr=new XMLHttpRequest();
  let start=Date.now();
 
- x.upload.onprogress=e=>{
+ xhr.upload.onprogress=e=>{
    let percent=(e.loaded/e.total*100).toFixed(1);
-   document.getElementById("p").value=percent;
    let speed=(e.loaded/1024/1024/((Date.now()-start)/1000)).toFixed(2);
+   document.getElementById("p").value=percent;
    document.getElementById("s").innerText=percent+"% | "+speed+" MB/s";
- }
- x.onload=()=>{document.body.innerHTML+=x.responseText;}
- x.open("POST","/upload");
- x.send(d);
+ };
+
+ xhr.onload=()=>{
+   let r=JSON.parse(xhr.responseText);
+   let id=r.result.document.file_id;
+   let name=r.result.document.file_name;
+   let link="{BASE_URL}/download/"+id+"?name="+encodeURIComponent(name);
+   document.body.innerHTML+="<p>✅ Upload Success</p><a href='"+link+"'>"+link+"</a>";
+ };
+
+ xhr.open("POST",url);
+ xhr.send(fd);
 }
 </script>
 </body>
 </html>
 """
-
-@app.post("/upload", response_class=HTMLResponse)
-async def upload(file: UploadFile = File(...)):
-    async with aiohttp.ClientSession() as s:
-        data = aiohttp.FormData()
-        data.add_field("chat_id", CHANNEL_ID)
-        data.add_field(
-            "document",
-            file.file,
-            filename=file.filename,
-            content_type="application/octet-stream"
-        )
-
-        async with s.post(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument",
-            data=data
-        ) as r:
-            res = await r.json()
-
-    file_id = res["result"]["document"]["file_id"]
-    name = res["result"]["document"]["file_name"]
-    link = f"{BASE_URL}/download/{file_id}?name={name}"
-
-    return f"<p>✅ Upload Success</p><a href='{link}' target='_blank'>{link}</a>"
 
 @app.get("/download/{file_id}")
 async def download(file_id: str):
