@@ -16,14 +16,9 @@ const port = process.env.PORT || 5000;
 const adminUser = process.env.ADMIN_USER || "admin"; 
 const adminPass = process.env.ADMIN_PASS || "password"; 
 
-// Local Server URL (For 50MB+ Files)
-// Agar local server set nahi hai to default Telegram API use karega
-const telegramApiUrl = process.env.TELEGRAM_API_URL || 'https://api.telegram.org';
-
-const bot = new TelegramBot(token, { 
-    polling: false, 
-    baseApiUrl: telegramApiUrl 
-});
+// Local Server hat gaya, toh ab hum Official Telegram API use karenge
+// (Max 50MB File Size)
+const bot = new TelegramBot(token, { polling: false });
 
 app.use(session({
     secret: 'super_secret_key_odisha',
@@ -34,17 +29,15 @@ app.use(session({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// --- SMART PATH FIX (Ye line sabse zaroori hai) ---
+// --- SMART PATH FIX (Ye website ko chalne mein madad karega) ---
 // Ye check karega ki index.html 'public' folder mein hai ya bahar
 const publicPath = path.join(__dirname, 'public');
 const rootPath = __dirname;
 
 if (fs.existsSync(path.join(publicPath, 'index.html'))) {
     app.use(express.static(publicPath));
-    console.log("Serving frontend from PUBLIC folder");
 } else {
     app.use(express.static(rootPath));
-    console.log("Serving frontend from ROOT folder");
 }
 
 app.get('/', (req, res) => {
@@ -57,6 +50,7 @@ app.get('/', (req, res) => {
 
 // --- API ROUTES ---
 
+// 1. Login Logic
 app.post('/api/login', (req, res) => {
     const { username, password } = req.body;
     if (username === adminUser && password === adminPass) {
@@ -71,9 +65,10 @@ app.get('/api/check-auth', (req, res) => {
     res.json({ loggedIn: req.session.loggedIn || false });
 });
 
+// 2. Upload Logic
 app.post('/upload', upload.single('file'), async (req, res) => {
     if (!req.session.loggedIn) return res.status(403).json({ success: false, message: "Unauthorized" });
-    if (!req.file) return res.status(400).json({ success: false, message: 'File too large or upload failed.' });
+    if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded.' });
 
     const filePath = req.file.path;
     const originalName = req.file.originalname;
@@ -95,10 +90,11 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     } catch (error) {
         if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
         console.error("Upload Error:", error.message);
-        res.status(500).json({ success: false, message: error.message || "Upload Failed" });
+        res.status(500).json({ success: false, message: "Upload Failed (File > 50MB requires Local Server)" });
     }
 });
 
+// 3. Download Logic
 app.get('/dl/:file_id/:filename', async (req, res) => {
     try {
         const fileId = req.params.file_id;
@@ -117,8 +113,7 @@ app.get('/dl/:file_id/:filename', async (req, res) => {
         
         response.data.pipe(res);
     } catch (error) {
-        console.error("Download Error:", error.message);
-        res.status(404).send(`Error: ${error.message}. If file is big, check Local Server setup.`);
+        res.status(404).send("File too big for direct download or Link Expired.");
     }
 });
 
