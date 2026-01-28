@@ -18,6 +18,7 @@ const adminPass = process.env.ADMIN_PASS || "password";
 
 // URL Setup
 let rawApiUrl = process.env.TELEGRAM_API_URL || 'https://api.telegram.org';
+// Last ka slash hatana zaroori hai
 const telegramApiUrl = rawApiUrl.replace(/\/$/, ""); 
 
 // Bot Setup
@@ -96,27 +97,34 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     }
 });
 
-// --- FINAL FIXED DOWNLOAD LOGIC ---
+// --- FINAL FIXED DOWNLOAD LOGIC (v3) ---
 app.get('/dl/:file_id/:filename', async (req, res) => {
     try {
         const fileId = req.params.file_id;
         const filename = decodeURIComponent(req.params.filename);
 
-        // Step 1: File ka path mangwao
+        // Step 1: File ka absolute path mangwao
         const file = await bot.getFile(fileId);
         
-        // Step 2: Path ko Saaf Karo (Clean the Path)
-        // Local Server "/var/lib/..." deta hai, humein bas "documents/file.jpg" chahiye
+        // Step 2: Path ko Sahi Karo (Don't remove the Token folder!)
+        // Asli path aisa hota hai: /var/lib/telegram-bot-api/<TOKEN>/documents/file.txt
+        // Humein chahiye: <TOKEN>/documents/file.txt
+        
         let relativePath = file.file_path;
-        if (relativePath.includes(token)) {
-            // Token ke baad wala hissa utha lo
-            relativePath = relativePath.split(token + '/')[1];
+        
+        // Agar path mein Token hai, toh wahin se shuru karo
+        const tokenIndex = relativePath.indexOf(token);
+        if (tokenIndex !== -1) {
+            relativePath = relativePath.substring(tokenIndex);
+        } else {
+             // Fallback: Agar token path mein nahi dikha, toh bas leading slash hata do
+             if (relativePath.startsWith('/')) relativePath = relativePath.substring(1);
         }
 
-        // Sahi URL banao
+        // URL Banao: http://server:8081/file/bot<TOKEN>/<TOKEN>/documents/file.txt
         const fileLink = `${telegramApiUrl}/file/bot${token}/${relativePath}`;
 
-        console.log("Corrected Download Link:", fileLink); // Ab ye logs mein sahi dikhega
+        console.log("Trying Final Link:", fileLink); 
 
         const response = await axios({
             url: fileLink,
@@ -130,8 +138,11 @@ app.get('/dl/:file_id/:filename', async (req, res) => {
         response.data.pipe(res);
     } catch (error) {
         console.error("Download Error:", error.message);
-        if (error.response && error.response.status === 404) {
-             return res.status(404).send("File path mismatch. Check logs for generated URL.");
+        if (error.response) {
+             console.error("Status:", error.response.status);
+             if (error.response.status === 404) {
+                 return res.status(404).send("File Not Found inside Local Server. Path issue.");
+             }
         }
         res.status(500).send("Download Failed.");
     }
