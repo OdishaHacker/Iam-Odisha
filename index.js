@@ -2,31 +2,23 @@ const express = require('express');
 const multer = require('multer');
 const TelegramBot = require('node-telegram-bot-api');
 const session = require('express-session');
-const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 
 const app = express();
 const upload = multer({ dest: 'uploads/' });
 
-// Environment Variables
+// ================= ENV =================
 const token = process.env.BOT_TOKEN;
 const channelId = process.env.CHANNEL_ID;
 const port = process.env.PORT || 5000;
-const adminUser = process.env.ADMIN_USER || "admin"; 
-const adminPass = process.env.ADMIN_PASS || "password"; 
+const adminUser = process.env.ADMIN_USER || "admin";
+const adminPass = process.env.ADMIN_PASS || "password";
 
-// URL Setup
-let rawApiUrl = process.env.TELEGRAM_API_URL || 'https://api.telegram.org';
-// Last ka slash hatana zaroori hai
-const telegramApiUrl = rawApiUrl.replace(/\/$/, ""); 
+// ================= BOT =================
+const bot = new TelegramBot(token, { polling: false });
 
-// Bot Setup
-const bot = new TelegramBot(token, { 
-    polling: false, 
-    baseApiUrl: telegramApiUrl 
-});
-
+// ================= MIDDLEWARE =================
 app.use(session({
     secret: 'super_secret_key_odisha',
     resave: false,
@@ -36,9 +28,10 @@ app.use(session({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// --- PATH FIX ---
+// ================= STATIC =================
 const publicPath = path.join(__dirname, 'public');
 const rootPath = __dirname;
+
 if (fs.existsSync(path.join(publicPath, 'index.html'))) {
     app.use(express.static(publicPath));
 } else {
@@ -53,101 +46,84 @@ app.get('/', (req, res) => {
     res.sendFile(htmlFile);
 });
 
-// --- API ROUTES ---
-
+// ================= AUTH =================
 app.post('/api/login', (req, res) => {
     const { username, password } = req.body;
     if (username === adminUser && password === adminPass) {
         req.session.loggedIn = true;
-        res.json({ success: true });
-    } else {
-        res.json({ success: false, message: "Invalid Credentials" });
+        return res.json({ success: true });
     }
+    res.json({ success: false, message: "Invalid Credentials" });
 });
 
 app.get('/api/check-auth', (req, res) => {
     res.json({ loggedIn: req.session.loggedIn || false });
 });
 
+// ================= UPLOAD =================
 app.post('/upload', upload.single('file'), async (req, res) => {
-    if (!req.session.loggedIn) return res.status(403).json({ success: false, message: "Unauthorized" });
-    if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded.' });
+    if (!req.session.loggedIn) {
+        return res.status(403).json({ success: false, message: "Unauthorized" });
+    }
+
+    if (!req.file) {
+        return res.status(400).json({ success: false, message: "No file uploaded" });
+    }
 
     const filePath = req.file.path;
     const originalName = req.file.originalname;
 
     try {
-        const msg = await bot.sendDocument(channelId, fs.createReadStream(filePath), {}, {
-            filename: originalName,
-            contentType: req.file.mimetype
-        });
+        const msg = await bot.sendDocument(
+            channelId,
+            fs.createReadStream(filePath),
+            {},
+            {
+                filename: originalName,
+                contentType: req.file.mimetype
+            }
+        );
 
-        fs.unlinkSync(filePath); 
+        fs.unlinkSync(filePath);
 
         const fileId = msg.document.file_id;
         const safeName = encodeURIComponent(originalName);
-        const downloadLink = `${req.protocol}://${req.get('host')}/dl/${fileId}/${safeName}`;
 
-        res.json({ success: true, link: downloadLink });
+        const downloadLink =
+            `${req.protocol}://${req.get('host')}/dl/${fileId}/${safeName}`;
 
-    } catch (error) {
+        res.json({
+            success: true,
+            link: downloadLink
+        });
+
+    } catch (err) {
         if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-        console.error("Upload Error:", error.message);
-        res.status(500).json({ success: false, message: "Upload Failed: " + error.message });
+        console.error("Upload Error:", err);
+        res.status(500).json({ success: false, message: "Upload failed" });
     }
 });
 
-// --- FINAL FIXED DOWNLOAD LOGIC (v3) ---
+// ================= DOWNLOAD (WORKING) =================
 app.get('/dl/:file_id/:filename', async (req, res) => {
     try {
         const fileId = req.params.file_id;
-        const filename = decodeURIComponent(req.params.filename);
 
-        // Step 1: File ka absolute path mangwao
         const file = await bot.getFile(fileId);
-        
-        // Step 2: Path ko Sahi Karo (Don't remove the Token folder!)
-        // Asli path aisa hota hai: /var/lib/telegram-bot-api/<TOKEN>/documents/file.txt
-        // Humein chahiye: <TOKEN>/documents/file.txt
-        
-        let relativePath = file.file_path;
-        
-        // Agar path mein Token hai, toh wahin se shuru karo
-        const tokenIndex = relativePath.indexOf(token);
-        if (tokenIndex !== -1) {
-            relativePath = relativePath.substring(tokenIndex);
-        } else {
-             // Fallback: Agar token path mein nahi dikha, toh bas leading slash hata do
-             if (relativePath.startsWith('/')) relativePath = relativePath.substring(1);
-        }
 
-        // URL Banao: http://server:8081/file/bot<TOKEN>/<TOKEN>/documents/file.txt
-        const fileLink = `${telegramApiUrl}/file/bot${token}/${relativePath}`;
+        const telegramDownloadUrl =
+            `https://api.telegram.org/file/bot${token}/${file.file_path}`;
 
-        console.log("Trying Final Link:", fileLink); 
+        // Direct redirect to Telegram (BEST & FAST)
+        return res.redirect(telegramDownloadUrl);
 
-        const response = await axios({
-            url: fileLink,
-            method: 'GET',
-            responseType: 'stream'
-        });
-
-        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-        res.setHeader('Content-Type', response.headers['content-type'] || 'application/octet-stream');
-        
-        response.data.pipe(res);
-    } catch (error) {
-        console.error("Download Error:", error.message);
-        if (error.response) {
-             console.error("Status:", error.response.status);
-             if (error.response.status === 404) {
-                 return res.status(404).send("File Not Found inside Local Server. Path issue.");
-             }
-        }
-        res.status(500).send("Download Failed.");
+    } catch (err) {
+        console.error("Download Error:", err);
+        res.status(500).send("Download failed");
     }
 });
 
+// ================= START =================
 app.listen(port, () => {
     console.log(`Server running on port ${port}`);
 });
