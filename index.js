@@ -16,9 +16,15 @@ const port = process.env.PORT || 5000;
 const adminUser = process.env.ADMIN_USER || "admin"; 
 const adminPass = process.env.ADMIN_PASS || "password"; 
 
-// Local Server hat gaya, toh ab hum Official Telegram API use karenge
-// (Max 50MB File Size)
-const bot = new TelegramBot(token, { polling: false });
+// --- MAGIC LINE (Local Server Support) ---
+// Agar Environment Variables mein Link hai toh wo use karega, nahi toh default
+const telegramApiUrl = process.env.TELEGRAM_API_URL || 'https://api.telegram.org';
+
+// Bot ko batana ki Local Server use kare
+const bot = new TelegramBot(token, { 
+    polling: false, 
+    baseApiUrl: telegramApiUrl 
+});
 
 app.use(session({
     secret: 'super_secret_key_odisha',
@@ -29,8 +35,7 @@ app.use(session({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// --- SMART PATH FIX (Ye website ko chalne mein madad karega) ---
-// Ye check karega ki index.html 'public' folder mein hai ya bahar
+// --- SMART PATH FIX ---
 const publicPath = path.join(__dirname, 'public');
 const rootPath = __dirname;
 
@@ -65,7 +70,7 @@ app.get('/api/check-auth', (req, res) => {
     res.json({ loggedIn: req.session.loggedIn || false });
 });
 
-// 2. Upload Logic
+// 2. Upload Logic (Ab 2GB tak support karega)
 app.post('/upload', upload.single('file'), async (req, res) => {
     if (!req.session.loggedIn) return res.status(403).json({ success: false, message: "Unauthorized" });
     if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded.' });
@@ -90,7 +95,7 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     } catch (error) {
         if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
         console.error("Upload Error:", error.message);
-        res.status(500).json({ success: false, message: "Upload Failed (File > 50MB requires Local Server)" });
+        res.status(500).json({ success: false, message: "Upload Failed: " + error.message });
     }
 });
 
@@ -113,7 +118,8 @@ app.get('/dl/:file_id/:filename', async (req, res) => {
         
         response.data.pipe(res);
     } catch (error) {
-        res.status(404).send("File too big for direct download or Link Expired.");
+        console.error("Download Error:", error.message);
+        res.status(404).send("File error. Ensure Local Server is connected.");
     }
 });
 
