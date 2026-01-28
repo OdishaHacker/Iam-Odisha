@@ -1,43 +1,103 @@
 const express = require('express');
 const multer = require('multer');
 const TelegramBot = require('node-telegram-bot-api');
+const session = require('express-session');
+const axios = require('axios');
 const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const upload = multer({ dest: 'uploads/' });
 
-// Token aur Channel ID hum Coolify se lenge (Code mein nahi likhenge)
+// Environment Variables
 const token = process.env.BOT_TOKEN;
 const channelId = process.env.CHANNEL_ID;
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 5000;
+const adminUser = process.env.ADMIN_USER || "admin"; // Default user
+const adminPass = process.env.ADMIN_PASS || "password"; // Default pass
 
-// Bot setup
 const bot = new TelegramBot(token, { polling: false });
 
-app.use(express.static('public'));
+// Session Setup for Login
+app.use(session({
+    secret: 'super_secret_key_odisha',
+    resave: false,
+    saveUninitialized: true
+}));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-app.post('/upload', upload.single('file'), async (req, res) => {
-    if (!req.file) {
-        return res.status(400).send('No file uploaded.');
+// Serve Frontend
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+// --- API ROUTES ---
+
+// 1. Login Route
+app.post('/api/login', (req, res) => {
+    const { username, password } = req.body;
+    if (username === adminUser && password === adminPass) {
+        req.session.loggedIn = true;
+        res.json({ success: true });
+    } else {
+        res.json({ success: false, message: "Invalid Credentials" });
     }
+});
+
+// 2. Check Login Status
+app.get('/api/check-auth', (req, res) => {
+    res.json({ loggedIn: req.session.loggedIn || false });
+});
+
+// 3. Upload Route (Protected)
+app.post('/upload', upload.single('file'), async (req, res) => {
+    if (!req.session.loggedIn) return res.status(403).json({ success: false, message: "Unauthorized" });
+    if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded.' });
 
     const filePath = req.file.path;
     const originalName = req.file.originalname;
 
     try {
-        await bot.sendDocument(channelId, fs.createReadStream(filePath), {}, {
+        const msg = await bot.sendDocument(channelId, fs.createReadStream(filePath), {}, {
             filename: originalName,
             contentType: req.file.mimetype
         });
 
-        // Kaam hone ke baad file delete karein
-        fs.unlinkSync(filePath);
-        res.json({ success: true, message: 'File sent to Telegram!' });
+        fs.unlinkSync(filePath); // Cleanup
+
+        // File ID mil gaya, ab download link banayenge
+        const fileId = msg.document.file_id;
+        
+        // Humara apna download link (Safe)
+        const downloadLink = `${req.protocol}://${req.get('host')}/dl/${fileId}/${originalName}`;
+
+        res.json({ success: true, link: downloadLink });
 
     } catch (error) {
-        console.error(error);
         if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
         res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// 4. Download Proxy Route (Smart Work)
+// User link kholega -> Server Telegram se file layega -> User ko dega (Token Hidden rahega)
+app.get('/dl/:file_id/:filename', async (req, res) => {
+    try {
+        const fileId = req.params.file_id;
+        const fileLink = await bot.getFileLink(fileId);
+        
+        // Telegram se stream karke user ko bhejna
+        const response = await axios({
+            url: fileLink,
+            method: 'GET',
+            responseType: 'stream'
+        });
+
+        res.setHeader('Content-Disposition', `attachment; filename="${req.params.filename}"`);
+        response.data.pipe(res);
+    } catch (error) {
+        res.status(404).send("File not found or expired.");
     }
 });
 
