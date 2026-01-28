@@ -16,11 +16,12 @@ const port = process.env.PORT || 5000;
 const adminUser = process.env.ADMIN_USER || "admin"; 
 const adminPass = process.env.ADMIN_PASS || "password"; 
 
-// --- MAGIC LINE (Local Server Support) ---
-// Agar Environment Variables mein Link hai toh wo use karega, nahi toh default
-const telegramApiUrl = process.env.TELEGRAM_API_URL || 'https://api.telegram.org';
+// --- URL CLEANER (Smart Fix for 404) ---
+// Agar user ne galti se last mein '/' laga diya hai, toh ye use hata dega
+let rawApiUrl = process.env.TELEGRAM_API_URL || 'https://api.telegram.org';
+const telegramApiUrl = rawApiUrl.replace(/\/$/, ""); 
 
-// Bot ko batana ki Local Server use kare
+// Bot Setup
 const bot = new TelegramBot(token, { 
     polling: false, 
     baseApiUrl: telegramApiUrl 
@@ -35,10 +36,9 @@ app.use(session({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// --- SMART PATH FIX ---
+// --- PATH FIX ---
 const publicPath = path.join(__dirname, 'public');
 const rootPath = __dirname;
-
 if (fs.existsSync(path.join(publicPath, 'index.html'))) {
     app.use(express.static(publicPath));
 } else {
@@ -55,7 +55,6 @@ app.get('/', (req, res) => {
 
 // --- API ROUTES ---
 
-// 1. Login Logic
 app.post('/api/login', (req, res) => {
     const { username, password } = req.body;
     if (username === adminUser && password === adminPass) {
@@ -70,7 +69,6 @@ app.get('/api/check-auth', (req, res) => {
     res.json({ loggedIn: req.session.loggedIn || false });
 });
 
-// 2. Upload Logic (Ab 2GB tak support karega)
 app.post('/upload', upload.single('file'), async (req, res) => {
     if (!req.session.loggedIn) return res.status(403).json({ success: false, message: "Unauthorized" });
     if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded.' });
@@ -99,14 +97,21 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     }
 });
 
-// 3. Download Logic
+// --- NEW & IMPROVED DOWNLOAD LOGIC ---
 app.get('/dl/:file_id/:filename', async (req, res) => {
     try {
         const fileId = req.params.file_id;
         const filename = decodeURIComponent(req.params.filename);
 
-        const fileLink = await bot.getFileLink(fileId);
+        // Step 1: File ka asli path mangwao
+        const file = await bot.getFile(fileId);
         
+        // Step 2: URL khud banao (Library par bharosa mat karo)
+        // Ye Local Server aur Cloud dono ke liye kaam karega
+        const fileLink = `${telegramApiUrl}/file/bot${token}/${file.file_path}`;
+
+        console.log("Trying to download from:", fileLink); // Logs mein dikhega agar fail hua
+
         const response = await axios({
             url: fileLink,
             method: 'GET',
@@ -118,8 +123,14 @@ app.get('/dl/:file_id/:filename', async (req, res) => {
         
         response.data.pipe(res);
     } catch (error) {
-        console.error("Download Error:", error.message);
-        res.status(404).send("File error. Ensure Local Server is connected.");
+        console.error("Download Error Details:", error.message);
+        if (error.response) {
+            console.error("Server Responded With:", error.response.status);
+            if(error.response.status === 404) {
+                 return res.status(404).send("File Not Found on Local Server. (Try re-uploading)");
+            }
+        }
+        res.status(500).send("Download Failed. Check Logs.");
     }
 });
 
