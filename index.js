@@ -4,6 +4,7 @@ const TelegramBot = require('node-telegram-bot-api');
 const session = require('express-session');
 const fs = require('fs');
 const path = require('path');
+const fetch = require('node-fetch'); // Naya import
 
 const app = express();
 const upload = multer({ dest: 'uploads/' });
@@ -16,7 +17,6 @@ const adminUser = process.env.ADMIN_USER || "admin";
 const adminPass = process.env.ADMIN_PASS || "password";
 
 // ================= LOCAL BOT API SERVER CONFIG =================
-// 'tg-server' wahi naam hai jo aapne Coolify application settings mein rakha hai
 const bot = new TelegramBot(token, { 
     polling: false,
     baseApiUrl: "http://tg-server:8081" 
@@ -60,19 +60,10 @@ app.post('/api/login', (req, res) => {
     res.json({ success: false, message: "Invalid Credentials" });
 });
 
-app.get('/api/check-auth', (req, res) => {
-    res.json({ loggedIn: req.session.loggedIn || false });
-});
-
-// ================= UPLOAD (50MB+ Supported Now) =================
+// ================= UPLOAD (50MB+ Supported) =================
 app.post('/upload', upload.single('file'), async (req, res) => {
-    if (!req.session.loggedIn) {
-        return res.status(403).json({ success: false, message: "Unauthorized" });
-    }
-
-    if (!req.file) {
-        return res.status(400).json({ success: false, message: "No file uploaded" });
-    }
+    if (!req.session.loggedIn) return res.status(403).json({ success: false, message: "Unauthorized" });
+    if (!req.file) return res.status(400).json({ success: false, message: "No file uploaded" });
 
     const filePath = req.file.path;
     const originalName = req.file.originalname;
@@ -82,51 +73,50 @@ app.post('/upload', upload.single('file'), async (req, res) => {
             channelId,
             fs.createReadStream(filePath),
             {},
-            {
-                filename: originalName,
-                contentType: req.file.mimetype
-            }
+            { filename: originalName, contentType: req.file.mimetype }
         );
 
         if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 
         const fileId = msg.document.file_id;
         const safeName = encodeURIComponent(originalName);
+        const downloadLink = `${req.protocol}://${req.get('host')}/dl/${fileId}/${safeName}`;
 
-        const downloadLink =
-            `${req.protocol}://${req.get('host')}/dl/${fileId}/${safeName}`;
-
-        res.json({
-            success: true,
-            link: downloadLink
-        });
+        res.json({ success: true, link: downloadLink });
 
     } catch (err) {
         if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-        console.error("Upload Error Details:", err);
-        res.status(500).json({ success: false, message: "Upload failed: " + err.message });
+        console.error("Upload Error:", err);
+        res.status(500).json({ success: false, message: "Upload failed" });
     }
 });
 
-// ================= DOWNLOAD (LOCAL SERVER UPDATED) =================
+// ================= DOWNLOAD (STREAMING FIX) =================
 app.get('/dl/:file_id/:filename', async (req, res) => {
     try {
         const fileId = req.params.file_id;
         const file = await bot.getFile(fileId);
 
-        // Jab Local Server use karte hain, toh file_path seedha system path hota hai
-        // Isliye humein local server ke base URL se file download karni hogi
+        // Internal URL jo sirf server ke andar kaam karega
         const localDownloadUrl = `http://tg-server:8081/file/bot${token}/${file.file_path}`;
 
-        return res.redirect(localDownloadUrl);
+        // Server-side fetch: Bot khud file mangwayega
+        const response = await fetch(localDownloadUrl);
+        if (!response.ok) throw new Error("File not found on local server");
+
+        // Headers set karein taaki download start ho
+        res.setHeader('Content-Disposition', `attachment; filename="${req.params.filename}"`);
+        res.setHeader('Content-Type', 'application/octet-stream');
+
+        // File stream karein: Internal server se seedha User tak
+        response.body.pipe(res);
 
     } catch (err) {
         console.error("Download Error:", err);
-        res.status(500).send("Download failed");
+        res.status(500).send("Download failed: File unreachable.");
     }
 });
 
-// ================= START =================
 app.listen(port, () => {
     console.log(`Server running on port ${port}`);
 });
