@@ -15,8 +15,12 @@ const port = process.env.PORT || 5000;
 const adminUser = process.env.ADMIN_USER || "admin";
 const adminPass = process.env.ADMIN_PASS || "password";
 
-// ================= BOT =================
-const bot = new TelegramBot(token, { polling: false });
+// ================= LOCAL BOT API SERVER CONFIG =================
+// 'tg-server' wahi naam hai jo aapne Coolify application settings mein rakha hai
+const bot = new TelegramBot(token, { 
+    polling: false,
+    baseApiUrl: "http://tg-server:8081" 
+});
 
 // ================= MIDDLEWARE =================
 app.use(session({
@@ -60,7 +64,7 @@ app.get('/api/check-auth', (req, res) => {
     res.json({ loggedIn: req.session.loggedIn || false });
 });
 
-// ================= UPLOAD =================
+// ================= UPLOAD (50MB+ Supported Now) =================
 app.post('/upload', upload.single('file'), async (req, res) => {
     if (!req.session.loggedIn) {
         return res.status(403).json({ success: false, message: "Unauthorized" });
@@ -84,7 +88,7 @@ app.post('/upload', upload.single('file'), async (req, res) => {
             }
         );
 
-        fs.unlinkSync(filePath);
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 
         const fileId = msg.document.file_id;
         const safeName = encodeURIComponent(originalName);
@@ -99,23 +103,22 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 
     } catch (err) {
         if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-        console.error("Upload Error:", err);
-        res.status(500).json({ success: false, message: "Upload failed" });
+        console.error("Upload Error Details:", err);
+        res.status(500).json({ success: false, message: "Upload failed: " + err.message });
     }
 });
 
-// ================= DOWNLOAD (WORKING) =================
+// ================= DOWNLOAD (LOCAL SERVER UPDATED) =================
 app.get('/dl/:file_id/:filename', async (req, res) => {
     try {
         const fileId = req.params.file_id;
-
         const file = await bot.getFile(fileId);
 
-        const telegramDownloadUrl =
-            `https://api.telegram.org/file/bot${token}/${file.file_path}`;
+        // Jab Local Server use karte hain, toh file_path seedha system path hota hai
+        // Isliye humein local server ke base URL se file download karni hogi
+        const localDownloadUrl = `http://tg-server:8081/file/bot${token}/${file.file_path}`;
 
-        // Direct redirect to Telegram (BEST & FAST)
-        return res.redirect(telegramDownloadUrl);
+        return res.redirect(localDownloadUrl);
 
     } catch (err) {
         console.error("Download Error:", err);
