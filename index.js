@@ -6,8 +6,12 @@ const fs = require('fs');
 const path = require('path');
 
 const app = express();
-const upload = multer({ dest: 'uploads/' });
-
+const upload = multer({
+    dest: 'uploads/',
+    limits: {
+        fileSize: 2 * 1024 * 1024 * 1024 // 2 GB
+    }
+});
 // ENV
 const token = process.env.BOT_TOKEN;
 const channelId = process.env.CHANNEL_ID;
