@@ -91,36 +91,31 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     }
 });
 
-// ================= DOWNLOAD (PERMANENT FIX) =================
+// ================= DOWNLOAD (CLEAN PATH FIX) =================
 app.get('/dl/:file_id/:filename', async (req, res) => {
     try {
         const fileId = req.params.file_id;
-        
-        // 1. Bot ko pehle file ki details nikaalne dein
         const file = await bot.getFile(fileId);
-        
-        // Local mode mein humein server ka base address aur file_path ko sahi se jodna hota hai
-        const localDownloadUrl = `http://tg-server:8081/file/bot${token}/${file.file_path.replace(/^\//, '')}`;
 
-        console.log("Attempting to fetch from:", localDownloadUrl);
+        // Path se shuruat ka slash hatao aur double slash clean karo
+        const cleanPath = file.file_path.replace(/^\/+/, '');
+        const localDownloadUrl = `http://tg-server:8081/file/bot${token}/${cleanPath}`;
 
-        // 3. File fetch karein
+        console.log("Fetching from:", localDownloadUrl);
+
         const response = await fetch(localDownloadUrl);
         
         if (!response.ok) {
-            console.error(`Local Server Error: ${response.status} ${response.statusText}`);
-            throw new Error("File not found on local server");
+            console.error(`Status: ${response.status}`);
+            throw new Error("File missing on Local API Server");
         }
 
-        // 4. Browser ke liye headers set karein
         res.setHeader('Content-Disposition', `attachment; filename="${decodeURIComponent(req.params.filename)}"`);
         res.setHeader('Content-Type', 'application/octet-stream');
-
-        // 5. Data pipe (stream) karein
         response.body.pipe(res);
 
     } catch (err) {
-        console.error("Download Error Details:", err.message);
+        console.error("Error:", err.message);
         res.status(500).send("Download failed: " + err.message);
     }
 });
