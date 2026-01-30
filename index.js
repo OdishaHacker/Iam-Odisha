@@ -9,20 +9,20 @@ const { StringSession } = require("telegram/sessions");
 
 const app = express();
 
-/* ================= UPLOAD (2GB) ================= */
+/* ===== MULTER (2GB) ===== */
 const upload = multer({
   dest: "uploads/",
   limits: { fileSize: 2 * 1024 * 1024 * 1024 } // 2GB
 });
 
-/* ================= ENV ================= */
+/* ===== ENV ===== */
 const apiId = Number(process.env.TG_API_ID);
 const apiHash = process.env.TG_API_HASH;
-const stringSession = new StringSession(process.env.TG_SESSION);
+const stringSession = new StringSession(process.env.TG_SESSION || "");
 const channelId = process.env.CHANNEL_ID;
 const port = process.env.PORT || 5000;
 
-/* ================= TELEGRAM USER CLIENT ================= */
+/* ===== TELEGRAM USER CLIENT ===== */
 const tg = new TelegramClient(stringSession, apiId, apiHash, {
   connectionRetries: 5
 });
@@ -32,7 +32,7 @@ const tg = new TelegramClient(stringSession, apiId, apiHash, {
   console.log("Telegram USER connected");
 })();
 
-/* ================= EXPRESS ================= */
+/* ===== EXPRESS ===== */
 app.use(express.json({ limit: "2gb" }));
 app.use(express.urlencoded({ extended: true, limit: "2gb" }));
 
@@ -44,7 +44,7 @@ app.use(session({
 
 app.use(express.static(path.join(__dirname, "public")));
 
-/* ================= UPLOAD ================= */
+/* ===== UPLOAD ===== */
 app.post("/upload", upload.single("file"), async (req, res) => {
   if (!req.file) return res.status(400).json({ success: false });
 
@@ -60,14 +60,13 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     const link = `${req.protocol}://${req.get("host")}/dl/${msgId}`;
 
     res.json({ success: true, link });
-
   } catch (e) {
     if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
     res.status(500).json({ success: false, error: e.message });
   }
 });
 
-/* ================= DOWNLOAD ================= */
+/* ===== DOWNLOAD (Telegram CDN) ===== */
 app.get("/dl/:msgId", async (req, res) => {
   try {
     const msg = await tg.getMessages(channelId, { ids: Number(req.params.msgId) });
@@ -79,7 +78,7 @@ app.get("/dl/:msgId", async (req, res) => {
   }
 });
 
-/* ================= START ================= */
+/* ===== START ===== */
 app.listen(port, "0.0.0.0", () => {
   console.log("Server running on port", port);
 });
