@@ -211,6 +211,7 @@
             };
 
             xhr.open('POST', '/upload', true);
+            xhr.timeout = 0; // ✅ unlimited time (2GB upload fix)
             xhr.send(formData);
         });
     </script>
