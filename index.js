@@ -91,29 +91,38 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     }
 });
 
-// ================= DOWNLOAD (STREAMING FIX) =================
+// ================= DOWNLOAD (PERMANENT FIX) =================
 app.get('/dl/:file_id/:filename', async (req, res) => {
     try {
         const fileId = req.params.file_id;
+        
+        // 1. Bot ko pehle file ki details nikaalne dein
         const file = await bot.getFile(fileId);
 
-        // Internal URL jo sirf server ke andar kaam karega
+        // 2. Local API server ka rasta (URL)
+        // Dhyan dein: token se pehle 'bot' hona zaroori hai
         const localDownloadUrl = `http://tg-server:8081/file/bot${token}/${file.file_path}`;
 
-        // Server-side fetch: Bot khud file mangwayega
-        const response = await fetch(localDownloadUrl);
-        if (!response.ok) throw new Error("File not found on local server");
+        console.log("Attempting to fetch from:", localDownloadUrl);
 
-        // Headers set karein taaki download start ho
-        res.setHeader('Content-Disposition', `attachment; filename="${req.params.filename}"`);
+        // 3. File fetch karein
+        const response = await fetch(localDownloadUrl);
+        
+        if (!response.ok) {
+            console.error(`Local Server Error: ${response.status} ${response.statusText}`);
+            throw new Error("File not found on local server");
+        }
+
+        // 4. Browser ke liye headers set karein
+        res.setHeader('Content-Disposition', `attachment; filename="${decodeURIComponent(req.params.filename)}"`);
         res.setHeader('Content-Type', 'application/octet-stream');
 
-        // File stream karein: Internal server se seedha User tak
+        // 5. Data pipe (stream) karein
         response.body.pipe(res);
 
     } catch (err) {
-        console.error("Download Error:", err);
-        res.status(500).send("Download failed: File unreachable.");
+        console.error("Download Error Details:", err.message);
+        res.status(500).send("Download failed: " + err.message);
     }
 });
 
